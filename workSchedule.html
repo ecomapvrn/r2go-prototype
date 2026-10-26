@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>График работы сотрудников — R2GO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        pageBg: '#F5F5F5',
+                        coolGray: '#F2F6F9',
+                        cardBg: '#FFFFFF',
+                        mainText: '#111111',
+                        secondaryText: '#858585',
+                        cardBorder: '#E4E6E8',
+                        pinkBtn: '#E23E9F',
+                        purpleAccent: '#7C3AED',
+                        blueAccent: '#2563EB',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #F5F5F5;
+            color: #111111;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
+        ::-webkit-scrollbar-thumb { background: #E4E6E8; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-pageBg text-mainText min-h-screen flex items-center justify-center p-0 sm:p-4">
+    <div id="root" class="w-full max-w-md bg-pageBg min-h-screen sm:min-h-[850px] sm:rounded-3xl sm:shadow-2xl sm:border border-cardBorder overflow-hidden flex flex-col relative"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        const productList = [
+            "R2GO_VF_AS",
+            "R2GO_VF_AS_EF",
+            "R2GO_VF_ASM_New",
+            "R2GO_VF_M_AF",
+            "R2GO_VF_MIX_2.1",
+            "R2GO_VF_MIX_2.2"
+        ];
+
+        // Функция расчета времени по нормативу
+        function calculateEstimatedTime(taskType, qty) {
+            const count = parseInt(qty) || 0;
+            let minutes = 20;
+            if (taskType.includes('Хвосты')) minutes = Math.round(count * 0.045);
+            else if (taskType.includes('Запайка')) minutes = Math.round(count * 0.03);
+            else if (taskType.includes('Обклейка')) minutes = Math.round(count * 0.015);
+            else minutes = Math.round(count * 0.09);
+
+            if (minutes < 1) minutes = 1;
+            if (minutes >= 60) {
+                const hours = (minutes / 60).toFixed(1);
+                return `${hours} ч`;
+            }
+            return `${minutes} мин`;
+        }
+
+        function App() {
+            const [role, setRole] = useState('manager'); // 'manager' | 'worker'
+            const [selectedMonth, setSelectedMonth] = useState('Октябрь'); // Октябрь, Ноябрь, Декабрь
+            const [selectedWeek, setSelectedWeek] = useState(1); // 1, 2, 3, 4 неделя
+            const [toast, setToast] = useState(null);
+
+            // Модальное окно для выдачи плана (мультизадачное)
+            const [assignPlanModal, setAssignPlanModal] = useState(null); // { employeeId, employeeName, dayNum, tasksList }
+            const [currentProduct, setCurrentProduct] = useState(productList[0]);
+            const [currentTaskType, setCurrentTaskType] = useState('Сборка (Хвосты)');
+            const [currentQty, setCurrentQty] = useState('500');
+
+            // Дни недели
+            const daysOfWeek = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+            const getDaysForWeek = (weekNum) => {
+                const start = (weekNum - 1) * 7 + 1;
+                let days = [];
+                for (let i = 0; i < 7; i++) {
+                    days.push(start + i);
+                }
+                return days;
+            };
+
+            const currentWeekDays = getDaysForWeek(selectedWeek);
+
+            // Данные сотрудников и их статусы по дням
+            // Статусы: 'confirmed' (с галочкой, план выдан), 'shift_confirmed' (закрашенная плашка без галочки, план не выдан), 'need' (потребность), 'can' (может выйти), 'off' (нерабочий)
+            const [staffSchedule, setStaffSchedule] = useState([
+                { 
+                    id: 1, 
+                    name: 'Светлана', 
+                    days: {
+                        1: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS', taskType: 'Сборка (Хвосты)', qty: 500, time: '22 мин' }] },
+                        2: { status: 'shift_confirmed', tasks: [] },
+                        3: { status: 'need', tasks: [] },
+                        4: { status: 'off', tasks: [] },
+                        5: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS_EF', taskType: 'Обклейка ШК', qty: 800, time: '12 мин' }] },
+                        6: { status: 'can', tasks: [] },
+                        7: { status: 'off', tasks: [] },
+                        // Неделя 2
+                        8: { status: 'can', tasks: [] },
+                        9: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS', taskType: 'Сборка (Хвосты)', qty: 400, time: '18 мин' }] },
+                        10: { status: 'off', tasks: [] },
+                        11: { status: 'need', tasks: [] },
+                        12: { status: 'shift_confirmed', tasks: [] },
+                        13: { status: 'off', tasks: [] },
+                        14: { status: 'off', tasks: [] },
+                        // Неделя 3
+                        15: { status: 'can', tasks: [] },
+                        16: { status: 'can', tasks: [] },
+                        17: { status: 'off', tasks: [] },
+                        18: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_M_AF', taskType: 'Полный цикл FBO', qty: 600, time: '54 мин' }] },
+                        19: { status: 'can', tasks: [] },
+                        20: { status: 'off', tasks: [] },
+                        21: { status: 'off', tasks: [] },
+                        // Неделя 4
+                        22: { status: 'need', tasks: [] },
+                        23: { status: 'can', tasks: [] },
+                        24: { status: 'off', tasks: [] },
+                        25: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_MIX_2.1', taskType: 'Запайка', qty: 500, time: '15 мин' }] },
+                        26: { status: 'can', tasks: [] },
+                        27: { status: 'off', tasks: [] },
+                        28: { status: 'off', tasks: [] },
+                    }
+                },
+                { 
+                    id: 2, 
+                    name: 'Платон', 
+                    days: {
+                        1: { status: 'can', tasks: [] },
+                        2: { status: 'shift_confirmed', tasks: [] },
+                        3: { status: 'off', tasks: [] },
+                        4: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS', taskType: 'Сборка (Хвосты)', qty: 1000, time: '45 мин' }] },
+                        5: { status: 'can', tasks: [] },
+                        6: { status: 'off', tasks: [] },
+                        7: { status: 'off', tasks: [] },
+                        8: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_ASM_New', taskType: 'Запайка', qty: 500, time: '15 мин' }] },
+                        9: { status: 'can', tasks: [] },
+                        10: { status: 'off', tasks: [] },
+                        11: { status: 'can', tasks: [] },
+                        12: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS_EF', taskType: 'Обклейка ШК', qty: 300, time: '5 мин' }] },
+                        13: { status: 'off', tasks: [] },
+                        14: { status: 'off', tasks: [] },
+                        15: { status: 'can', tasks: [] },
+                        16: { status: 'off', tasks: [] },
+                        17: { status: 'can', tasks: [] },
+                        18: { status: 'can', tasks: [] },
+                        19: { status: 'off', tasks: [] },
+                        20: { status: 'off', tasks: [] },
+                        21: { status: 'off', tasks: [] },
+                        22: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_M_AF', taskType: 'Сборка (Хвосты)', qty: 400, time: '18 мин' }] },
+                        23: { status: 'can', tasks: [] },
+                        24: { status: 'off', tasks: [] },
+                        25: { status: 'can', tasks: [] },
+                        26: { status: 'off', tasks: [] },
+                        27: { status: 'off', tasks: [] },
+                        28: { status: 'off', tasks: [] },
+                    }
+                },
+                { 
+                    id: 3, 
+                    name: 'Елизавета', 
+                    days: {
+                        1: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS_EF', taskType: 'Запайка', qty: 400, time: '12 мин' }] },
+                        2: { status: 'can', tasks: [] },
+                        3: { status: 'need', tasks: [] },
+                        4: { status: 'off', tasks: [] },
+                        5: { status: 'shift_confirmed', tasks: [] },
+                        6: { status: 'off', tasks: [] },
+                        7: { status: 'off', tasks: [] },
+                        8: { status: 'off', tasks: [] },
+                        9: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_MIX_2.1', taskType: 'Обклейка ШК', qty: 200, time: '3 мин' }] },
+                        10: { status: 'can', tasks: [] },
+                        11: { status: 'off', tasks: [] },
+                        12: { status: 'can', tasks: [] },
+                        13: { status: 'off', tasks: [] },
+                        14: { status: 'off', tasks: [] },
+                        15: { status: 'can', tasks: [] },
+                        16: { status: 'can', tasks: [] },
+                        17: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_AS', taskType: 'Сборка (Хвосты)', qty: 500, time: '22 мин' }] },
+                        18: { status: 'off', tasks: [] },
+                        19: { status: 'can', tasks: [] },
+                        20: { status: 'off', tasks: [] },
+                        21: { status: 'off', tasks: [] },
+                        22: { status: 'can', tasks: [] },
+                        23: { status: 'confirmed', tasks: [{ product: 'R2GO_VF_ASM_New', taskType: 'Запайка', qty: 300, time: '9 мин' }] },
+                        24: { status: 'off', tasks: [] },
+                        25: { status: 'can', tasks: [] },
+                        26: { status: 'off', tasks: [] },
+                        27: { status: 'off', tasks: [] },
+                        28: { status: 'off', tasks: [] },
+                    }
+                }
+            ]);
+
+            const showToast = (msg) => {
+                setToast(msg);
+                setTimeout(() => setToast(null), 3000);
+            };
+
+            const handleCellClick = (emp, dayNum) => {
+                const currentStatus = emp.days[dayNum]?.status || 'off';
+                const currentTasks = emp.days[dayNum]?.tasks || [];
+
+                if (role === 'manager') {
+                    if (currentStatus === 'off') {
+                        setStaffSchedule(staffSchedule.map(e => {
+                            if (e.id === emp.id) {
+                                return {
+                                    ...e,
+                                    days: {
+                                        ...e.days,
+                                        [dayNum]: { ...e.days[dayNum], status: 'need' }
+                                    }
+                                };
+                            }
+                            return e;
+                        }));
+                        showToast(`Потребность установлена на ${dayNum}-е число`);
+                    } else if (currentStatus === 'need') {
+                        setStaffSchedule(staffSchedule.map(e => {
+                            if (e.id === emp.id) {
+                                return {
+                                    ...e,
+                                    days: {
+                                        ...e.days,
+                                        [dayNum]: { ...e.days[dayNum], status: 'off' }
+                                    }
+                                };
+                            }
+                            return e;
+                        }));
+                        showToast(`Потребность снята`);
+                    } else {
+                        // Открываем модальное окно выдачи/редактирования плана
+                        setAssignPlanModal({
+                            employeeId: emp.id,
+                            employeeName: emp.name,
+                            dayNum: dayNum,
+                            tasksList: [...currentTasks]
+                        });
+                        setCurrentProduct(productList[0]);
+                        setCurrentTaskType('Сборка (Хвосты)');
+                        setCurrentQty('500');
+                    }
+                } else {
+                    const newStatus = currentStatus === 'can' ? 'off' : 'can';
+                    setStaffSchedule(staffSchedule.map(e => {
+                        if (e.id === emp.id) {
+                            return {
+                                ...e,
+                                days: {
+                                    ...e.days,
+                                    [dayNum]: { ...e.days[dayNum], status: newStatus }
+                                }
+                            };
+                        }
+                        return e;
+                    }));
+                    showToast(`Ваша доступность на ${dayNum}-е число обновлена`);
+                }
+            };
+
+            // Добавить задачу в список выдаваемого плана внутри модалки
+            const handleAddTaskToList = (e) => {
+                e.preventDefault();
+                if (!assignPlanModal) return;
+                const qtyVal = parseInt(currentQty) || 100;
+                const estTime = calculateEstimatedTime(currentTaskType, qtyVal);
+
+                const newTask = {
+                    id: Date.now(),
+                    product: currentProduct,
+                    taskType: currentTaskType,
+                    qty: qtyVal,
+                    time: estTime
+                };
+
+                setAssignPlanModal({
+                    ...assignPlanModal,
+                    tasksList: [...assignPlanModal.tasksList, newTask]
+                });
+                setCurrentQty('500');
+                showToast("Задача добавлена в список плана");
+            };
+
+            // Удалить задачу из списка плана
+            const handleRemoveTaskFromList = (taskId) => {
+                if (!assignPlanModal) return;
+                setAssignPlanModal({
+                    ...assignPlanModal,
+                    tasksList: assignPlanModal.tasksList.filter(t => t.id !== taskId)
+                });
+            };
+
+            // Сохранить весь план смены
+            const handleSaveModalPlan = () => {
+                if (!assignPlanModal) return;
+                const tasks = assignPlanModal.tasksList;
+                const newStatus = tasks.length > 0 ? 'confirmed' : 'shift_confirmed';
+
+                setStaffSchedule(staffSchedule.map(emp => {
+                    if (emp.id === assignPlanModal.employeeId) {
+                        return {
+                            ...emp,
+                            days: {
+                                ...emp.days,
+                                [assignPlanModal.dayNum]: {
+                                    status: newStatus,
+                                    tasks: tasks
+                                }
+                            }
+                        };
+                    }
+                    return emp;
+                }));
+
+                showToast(`План для ${assignPlanModal.employeeName} сохранен`);
+                setAssignPlanModal(null);
+            };
+
+            const renderStatusIcon = (status) => {
+                switch(status) {
+                    case 'confirmed':
+                        return <div className="w-6 h-6 rounded-full bg-[#E23E9F] mx-auto shadow-xs flex items-center justify-center text-[10px] text-white font-bold" title="Подтверждена (План выдан)">✓</div>;
+                    case 'shift_confirmed':
+                        return <div className="w-6 h-6 rounded-full bg-[#E23E9F] mx-auto shadow-xs" title="Смена подтверждена (План не выдан)"></div>;
+                    case 'can':
+                        return <div className="w-6 h-6 rounded-full border-2 border-[#E23E9F] bg-pink-50 mx-auto" title="Сборщик может выйти"></div>;
+                    case 'need':
+                        return <div className="w-6 h-6 rounded-lg border-2 border-dashed border-[#E23E9F] bg-white mx-auto flex items-center justify-center text-[10px] text-pinkBtn font-bold" title="Потребность руководителя">!</div>;
+                    case 'off':
+                    default:
+                        return <div className="w-6 h-6 rounded-lg bg-cardBorder mx-auto" title="Нерабочий день"></div>;
+                }
+            };
+
+            return (
+                <div className="flex flex-col h-full bg-pageBg flex-1 pb-20">
+                    {/* Header */}
+                    <header className="bg-white/90 backdrop-blur-md sticky top-0 z-20 px-4 py-3.5 border-b border-cardBorder flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <button 
+                                type="button" 
+                                onClick={() => window.location.href = 'main.html'} 
+                                aria-label="Назад" 
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cardBorder bg-white text-mainText hover:bg-coolGray transition-colors cursor-pointer"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m15 18-6-6 6-6"/>
+                                </svg>
+                            </button>
+                            <div>
+                                <h1 className="text-lg font-bold text-mainText tracking-tight">График работы</h1>
+                                <p className="text-xs text-secondaryText">Сетка смен и планы</p>
+                            </div>
+                        </div>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-purpleAccent/10 text-purpleAccent border border-purpleAccent/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purpleAccent mr-1.5 animate-pulse"></span>
+                            Online
+                        </span>
+                    </header>
+
+                    {/* Role Switcher */}
+                    <div className="px-4 pt-3 pb-1 bg-white border-b border-cardBorder sticky top-[69px] z-10">
+                        <div className="flex bg-coolGray p-1 rounded-xl">
+                            <button 
+                                onClick={() => setRole('manager')}
+                                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${role === 'manager' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                Руководитель
+                            </button>
+                            <button 
+                                onClick={() => setRole('worker')}
+                                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${role === 'worker' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                Сборщик (Светлана)
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Выбор месяца */}
+                    <div className="px-4 py-2.5 bg-white border-b border-cardBorder flex gap-2 overflow-x-auto">
+                        {['Октябрь', 'Ноябрь', 'Декабрь'].map((month) => (
+                            <button
+                                key={month}
+                                onClick={() => setSelectedMonth(month)}
+                                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${selectedMonth === month ? 'bg-pinkBtn text-white shadow-sm' : 'bg-coolGray text-secondaryText hover:text-mainText'}`}
+                            >
+                                {month} 2026
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Выбор недели */}
+                    <div className="px-4 py-2 bg-coolGray border-b border-cardBorder flex gap-2 overflow-x-auto items-center">
+                        <span className="text-[11px] font-bold text-secondaryText uppercase tracking-wider shrink-0">Неделя:</span>
+                        {[1, 2, 3, 4].map((weekNum) => (
+                            <button
+                                key={weekNum}
+                                onClick={() => setSelectedWeek(weekNum)}
+                                className={`px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer whitespace-nowrap ${selectedWeek === weekNum ? 'bg-mainText text-white shadow-xs' : 'bg-white text-mainText border border-cardBorder hover:bg-gray-50'}`}
+                            >
+                                Неделя {weekNum} ({((weekNum-1)*7+1)}-{Math.min(weekNum*7, 28)})
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* ОСНОВНОЙ КОНТЕНТ: СЕТКА ГРАФИКА */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-4">
+                            <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                <div>
+                                    <h3 className="text-sm font-bold text-mainText">График ({selectedMonth}, Неделя {selectedWeek})</h3>
+                                    <p className="text-[11px] text-secondaryText">
+                                        {role === 'manager' 
+                                            ? 'Клик по смене: выдать план или управлять статусом' 
+                                            : 'Клик по дню: отметить доступность'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-center border-collapse">
+                                    <thead>
+                                        <tr className="border-b border-cardBorder text-xs text-secondaryText">
+                                            <th className="text-left py-2 font-medium">Сотрудник</th>
+                                            {daysOfWeek.map((d, index) => {
+                                                const dayNumber = currentWeekDays[index];
+                                                return (
+                                                    <th key={index} className="py-2 font-medium w-9">
+                                                        {d}<br/>
+                                                        <span className="text-[10px] text-mainText font-semibold">{dayNumber}</span>
+                                                    </th>
+                                                );
+                                            })}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-cardBorder/60 text-xs">
+                                        {(role === 'manager' ? staffSchedule : staffSchedule.filter(s => s.name === 'Светлана')).map(emp => (
+                                            <tr key={emp.id} className="hover:bg-coolGray/40 transition">
+                                                <td className="text-left py-3.5 font-bold text-mainText whitespace-nowrap pr-2">
+                                                    {emp.name}
+                                                    {emp.days[currentWeekDays[0]]?.tasks?.length > 0 && (
+                                                        <div className="text-[9px] text-pinkBtn font-normal truncate max-w-[70px]">План есть</div>
+                                                    )}
+                                                </td>
+                                                {currentWeekDays.map(dayNum => {
+                                                    const dayData = emp.days[dayNum] || { status: 'off', tasks: [] };
+                                                    return (
+                                                        <td 
+                                                            key={dayNum} 
+                                                            onClick={() => handleCellClick(emp, dayNum)}
+                                                            className="py-3.5 cursor-pointer hover:bg-coolGray transition rounded-lg"
+                                                            title={`День ${dayNum}: статус ${dayData.status}`}
+                                                        >
+                                                            {renderStatusIcon(dayData.status)}
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* ЛЕГЕНДА СТАТУСОВ */}
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                            <h4 className="text-xs font-bold text-mainText uppercase tracking-wider">Легенда</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-secondaryText">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full bg-[#E23E9F] shrink-0 flex items-center justify-center text-[9px] text-white font-bold">✓</div>
+                                    <span>Подтверждена (План выдан)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full bg-[#E23E9F] shrink-0"></div>
+                                    <span>Смена подтверждена (План не выдан)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-lg border-2 border-dashed border-[#E23E9F] bg-white shrink-0 flex items-center justify-center text-[9px] text-pinkBtn font-bold">!</div>
+                                    <span>Потребность руководителя</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full border-2 border-[#E23E9F] bg-pink-50 shrink-0"></div>
+                                    <span>Сборщик может выйти</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-lg bg-cardBorder shrink-0"></div>
+                                    <span>Нерабочий день</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Modal: Мультизадачный popup выдачи плана работ */}
+                    {assignPlanModal && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4 max-h-[90vh] overflow-y-auto">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">Выдать план работ</h3>
+                                    <button onClick={() => setAssignPlanModal(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Сотрудник: <strong className="text-mainText">{assignPlanModal.employeeName}</strong> (День: {assignPlanModal.dayNum} число, {selectedMonth})</p>
+
+                                {/* Список уже добавленных в смену задач */}
+                                <div className="space-y-2">
+                                    <label className="block font-semibold text-xs text-secondaryText uppercase tracking-wider">Задачи на смену ({assignPlanModal.tasksList.length}):</label>
+                                    {assignPlanModal.tasksList.length === 0 ? (
+                                        <div className="p-3 bg-coolGray rounded-xl text-center text-xs text-secondaryText">Список задач пуст. Добавьте задачи ниже.</div>
+                                    ) : (
+                                        assignPlanModal.tasksList.map(task => (
+                                            <div key={task.id} className="p-3 bg-coolGray border border-cardBorder rounded-xl flex items-center justify-between text-xs">
+                                                <div>
+                                                    <div className="font-bold text-mainText">{task.product}</div>
+                                                    <div className="text-secondaryText">{task.taskType} • {task.qty} шт. <span className="text-pinkBtn font-semibold">(⏱ {task.time})</span></div>
+                                                </div>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => handleRemoveTaskFromList(task.id)}
+                                                    className="text-rose-500 hover:text-rose-700 font-bold px-2 py-1 cursor-pointer"
+                                                >
+                                                    Удалить
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+
+                                <hr className="border-cardBorder"/>
+
+                                {/* Форма добавления новой задачи в план */}
+                                <form onSubmit={handleAddTaskToList} className="space-y-3 text-xs bg-coolGray p-3.5 rounded-2xl border border-cardBorder">
+                                    <div className="font-bold text-mainText text-[13px]">Добавить задачу в план</div>
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Позиция товара</label>
+                                        <select
+                                            value={currentProduct}
+                                            onChange={(e) => setCurrentProduct(e.target.value)}
+                                            className="w-full p-2.5 bg-white border border-cardBorder rounded-xl text-mainText font-semibold focus:outline-none"
+                                        >
+                                            {productList.map(prod => (
+                                                <option key={prod} value={prod}>{prod}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Вид работы / Этап</label>
+                                        <select
+                                            value={currentTaskType}
+                                            onChange={(e) => setCurrentTaskType(e.target.value)}
+                                            className="w-full p-2.5 bg-white border border-cardBorder rounded-xl text-mainText focus:outline-none"
+                                        >
+                                            <option value="Сборка (Хвосты)">Сборка (Хвосты)</option>
+                                            <option value="Запайка">Запайка</option>
+                                            <option value="Обклейка ШК">Обклейка ШК</option>
+                                            <option value="Полный цикл FBO">Полный цикл FBO</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="flex gap-2 items-end">
+                                        <div className="flex-1">
+                                            <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Количество (шт.)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                required
+                                                value={currentQty}
+                                                onChange={(e) => setCurrentQty(e.target.value)}
+                                                className="w-full p-2.5 bg-white border border-cardBorder rounded-xl text-mainText focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="shrink-0 pb-1">
+                                            <span className="text-[11px] font-semibold text-pinkBtn bg-pink-50 px-2 py-2.5 rounded-xl border border-pinkBtn/20 block">
+                                                ⏱ {calculateEstimatedTime(currentTaskType, currentQty)}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <button type="submit" className="w-full py-2 bg-mainText text-white rounded-xl font-medium hover:bg-black transition cursor-pointer">
+                                        + Добавить задачу в список
+                                    </button>
+                                </form>
+
+                                <div className="flex gap-2 pt-2">
+                                    <button type="button" onClick={() => setAssignPlanModal(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                    <button type="button" onClick={handleSaveModalPlan} className="flex-1 text-white font-medium py-2.5 rounded-xl shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Сохранить план</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Toast */}
+                    {toast && (
+                        <div className="absolute bottom-6 left-4 right-4 z-50 bg-mainText text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between text-xs animate-bounce">
+                            <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-pinkBtn"></span>
+                                <span className="font-medium">{toast}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

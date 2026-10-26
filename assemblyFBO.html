@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сборка резерва FBO — R2GO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        pageBg: '#F5F5F5',
+                        coolGray: '#F2F6F9',
+                        cardBg: '#FFFFFF',
+                        mainText: '#111111',
+                        secondaryText: '#858585',
+                        cardBorder: '#E4E6E8',
+                        pinkBtn: '#E23E9F',
+                        purpleAccent: '#7C3AED',
+                        blueAccent: '#2563EB',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #F5F5F5;
+            color: #111111;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
+        ::-webkit-scrollbar-thumb { background: #E4E6E8; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-pageBg text-mainText min-h-screen flex items-center justify-center p-0 sm:p-4">
+
+    <div id="root" class="w-full max-w-md bg-pageBg min-h-screen sm:min-h-[850px] sm:rounded-3xl sm:shadow-2xl sm:border border-cardBorder overflow-hidden flex flex-col relative"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Вспомогательная функция расчета времени по нормативам
+        function calculateStagesTime(qty) {
+            const tailsMin = Math.round(qty * 0.045);
+            const sealingMin = Math.round(qty * 0.03);
+            const labelingMin = Math.round(qty * 0.015);
+            const totalMin = tailsMin + sealingMin + labelingMin;
+            return {
+                tails: `${tailsMin} мин`,
+                sealing: `${sealingMin} мин`,
+                labeling: `${labelingMin} мин`,
+                total: totalMin >= 60 ? `${Math.floor(totalMin/60)} ч ${totalMin%60} мин` : `${totalMin} мин`
+            };
+        }
+
+        // Функция сохранения выполненной задачи
+        function completeAssemblyTask(taskId, article, quantity, workerName, pieceRate) {
+            let completedTasks = JSON.parse(localStorage.getItem('r2go_completed_tasks')) || [];
+            let fboReserve = JSON.parse(localStorage.getItem('r2go_fbo_reserve')) || [];
+            let workerStats = JSON.parse(localStorage.getItem('r2go_worker_stats')) || { totalUnits: 0, totalEarned: 0, tasksCount: 0 };
+
+            const taskData = {
+                id: taskId,
+                article: article,
+                quantity: Number(quantity),
+                worker: workerName,
+                earned: Number(quantity) * Number(pieceRate),
+                date: new Date().toLocaleDateString('ru-RU') + ' ' + new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'})
+            };
+
+            completedTasks.push(taskData);
+            fboReserve.push(taskData);
+
+            workerStats.totalUnits += taskData.quantity;
+            workerStats.totalEarned += taskData.earned;
+            workerStats.tasksCount += 1;
+
+            localStorage.setItem('r2go_completed_tasks', JSON.stringify(completedTasks));
+            localStorage.setItem('r2go_fbo_reserve', JSON.stringify(fboReserve));
+            localStorage.setItem('r2go_worker_stats', JSON.stringify(workerStats));
+        }
+
+        const initialTasks = [
+            { 
+                id: 1, 
+                name: "R2GO_VF_ASM_New", 
+                quantity: 1100, 
+                stage: "assigned", 
+                stagesTime: { tails: "49 мин", sealing: "35 мин", labeling: "15 мин", total: "1 ч 39 мин" },
+                timerSeconds: 0,
+                timerRunning: false
+            },
+            { 
+                id: 2, 
+                name: "R2GO_VF_AS_EF", 
+                quantity: 600, 
+                stage: "tails_progress", 
+                stagesTime: { tails: "27 мин", sealing: "19 мин", labeling: "8 мин", total: "54 мин" },
+                timerSeconds: 145,
+                timerRunning: false
+            },
+            { 
+                id: 3, 
+                name: "R2GO_VF_MIX_2.1", 
+                quantity: 400, 
+                stage: "completed", 
+                stagesTime: { tails: "18 мин", sealing: "13 мин", labeling: "5 мин", total: "36 мин" },
+                timerSeconds: 0,
+                timerRunning: false
+            }
+        ];
+
+        const initialFboPlanData = [
+            { 
+                id: 1, 
+                article: "R2GO_VF_AA", 
+                ozon: 100, 
+                wb: 200, 
+                total: 300, 
+                hours: 5.00, 
+                tailsDone: 300, 
+                sealingDone: 300, 
+                labelingDone: 300, 
+                completedDone: 300,
+                stagesBreakdown: { tails: "2.5 ч", sealing: "1.5 ч", labeling: "1.0 ч" }
+            },
+            { 
+                id: 2, 
+                article: "R2GO_VF_ASM_New", 
+                ozon: 1600, 
+                wb: 1800, 
+                total: 3400, 
+                hours: 56.67, 
+                tailsDone: 3400, 
+                sealingDone: 2000, 
+                labelingDone: 1100, 
+                completedDone: 1100,
+                stagesBreakdown: { tails: "28.0 ч", sealing: "18.5 ч", labeling: "10.17 ч" }
+            },
+            { 
+                id: 3, 
+                article: "R2GO_VF_AS_EF", 
+                ozon: 600, 
+                wb: 600, 
+                total: 1200, 
+                hours: 2.67, 
+                isBox: true, 
+                tailsDone: 0, 
+                sealingDone: 0, 
+                labelingDone: 600, 
+                completedDone: 600,
+                stagesBreakdown: { tails: "0 ч (Шубер)", sealing: "0 ч (Шубер)", labeling: "2.67 ч" }
+            },
+            { 
+                id: 4, 
+                article: "R2GO_VF_MIX_2.1", 
+                ozon: 1900, 
+                wb: 400, 
+                total: 2300, 
+                hours: 5.11, 
+                tailsDone: 2300, 
+                sealingDone: 2300, 
+                labelingDone: 2300, 
+                completedDone: 2300,
+                stagesBreakdown: { tails: "2.2 ч", sealing: "1.8 ч", labeling: "1.11 ч" }
+            },
+        ];
+
+        const initialWorkersPlan = [
+            { id: 1, worker: "Светлана", article: "R2GO_VF_AS", taskType: "Сборка (Хвосты)", qty: 500, date: "1 октября", status: "В работе", estimatedTime: "22 мин" },
+            { id: 2, worker: "Светлана", article: "R2GO_VF_ASM_New", taskType: "Запайка", qty: 300, date: "2 октября", status: "Назначено", estimatedTime: "15 мин" },
+            { id: 3, worker: "Платон", article: "R2GO_VF_AS", taskType: "Сборка (Хвосты)", qty: 1000, date: "4 октября", status: "Выполнено", estimatedTime: "45 мин" },
+            { id: 4, worker: "Елизавета", article: "R2GO_VF_AS_EF", taskType: "Запайка", qty: 400, date: "1 октября", status: "В работе", estimatedTime: "20 мин" },
+        ];
+
+        function App() {
+            const globalRole = localStorage.getItem('r2go_global_role') || 'manager';
+            const [activeTab, setActiveTab] = useState('worker');
+            const [tasks, setTasks] = useState(initialTasks);
+            const [fboPlan, setFboPlan] = useState(initialFboPlanData);
+            const [workersPlan, setWorkersPlan] = useState(initialWorkersPlan);
+            const [toast, setToast] = useState(null);
+            const [detailTask, setDetailTask] = useState(null);
+
+            // Модалки
+            const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
+            const [newTaskName, setNewTaskName] = useState("");
+            const [newTaskQty, setNewTaskQty] = useState("");
+            const [addQtyTask, setAddQtyTask] = useState(null);
+            const [addQtyAmount, setAddQtyAmount] = useState(10);
+            
+            // Popup окно частичного взятия задачи (калькулятор времени при взятии)
+            const [partialTakeModal, setPartialTakeModal] = useState(null); // { task, nextStage, title }
+            const [partialQty, setPartialQty] = useState(100);
+
+            // Обычный popup подтверждения при завершении этапа
+            const [confirmAction, setConfirmAction] = useState(null); // { taskId, nextStage, title, message }
+
+            // Модалки руководителя
+            const [isAddPlanModalOpen, setIsAddPlanModalOpen] = useState(false);
+            const [newPlanArticle, setNewPlanArticle] = useState("");
+            const [newPlanOzon, setNewPlanOzon] = useState("");
+            const [newPlanWb, setNewPlanWb] = useState("");
+            const [newPlanIsBox, setNewPlanIsBox] = useState(false);
+
+            const [editPlanItem, setEditPlanItem] = useState(null);
+            const [editOzon, setEditOzon] = useState(0);
+            const [editWb, setEditWb] = useState(0);
+
+            const [detailPlanItem, setDetailPlanItem] = useState(null);
+
+            const [editWorkerTask, setEditWorkerTask] = useState(null);
+            const [editWorkerQty, setEditWorkerQty] = useState(0);
+            const [editWorkerStatus, setEditWorkerStatus] = useState("Назначено");
+
+            // Секундомер для активных задач
+            useEffect(() => {
+                const interval = setInterval(() => {
+                    setTasks(prevTasks => prevTasks.map(t => {
+                        if (t.timerRunning) {
+                            return { ...t, timerSeconds: t.timerSeconds + 1 };
+                        }
+                        return t;
+                    }));
+                }, 1000);
+                return () => clearInterval(interval);
+            }, []);
+
+            const showToast = (msg) => {
+                setToast(msg);
+                setTimeout(() => setToast(null), 3000);
+            };
+
+            const startTimer = (taskId) => {
+                setTasks(tasks.map(t => t.id === taskId ? { ...t, timerRunning: true } : t));
+                showToast("Таймер запущен");
+            };
+
+            const pauseTimer = (taskId) => {
+                setTasks(tasks.map(t => t.id === taskId ? { ...t, timerRunning: false } : t));
+                showToast("Таймер поставлен на паузу");
+            };
+
+            const stopTimer = (taskId) => {
+                setTasks(tasks.map(t => t.id === taskId ? { ...t, timerRunning: false, timerSeconds: 0 } : t));
+                showToast("Таймер остановлен и сброшен");
+            };
+
+            const formatTimer = (seconds) => {
+                const m = Math.floor(seconds / 60);
+                const s = seconds % 60;
+                return `${m}:${s < 10 ? '0' : ''}${s}`;
+            };
+
+            // Добавление новой задачи из нижней кнопки с расчетом времени
+            const handleAddTask = (e) => {
+                e.preventDefault();
+                if (!newTaskName.trim()) return;
+                const qty = parseInt(newTaskQty) || 100;
+                
+                const times = calculateStagesTime(qty);
+
+                const newTask = {
+                    id: Date.now(),
+                    name: newTaskName.trim(),
+                    quantity: qty,
+                    stage: "assigned",
+                    stagesTime: times,
+                    timerSeconds: 0,
+                    timerRunning: false
+                };
+
+                setTasks([newTask, ...tasks]);
+                setNewTaskName("");
+                setNewTaskQty("");
+                setIsAddTaskModalOpen(false);
+                showToast(`Задача "${newTask.name}" успешно добавлена`);
+            };
+
+            const handleAddQuantity = (e) => {
+                e.preventDefault();
+                if (!addQtyTask) return;
+                const amount = parseInt(addQtyAmount) || 0;
+                if (amount <= 0) return;
+                setTasks(tasks.map(t => t.id === addQtyTask.id ? { ...t, quantity: t.quantity + amount, stagesTime: calculateStagesTime(t.quantity + amount) } : t));
+                showToast(`Добавлено ${amount} шт. к "${addQtyTask.name}"`);
+                setAddQtyTask(null);
+                setAddQtyAmount(10);
+            };
+
+            // Подтверждение частичного взятия задачи (с разделением задачи на две, таймер изначально выключен)
+            const handleConfirmPartialTake = (e) => {
+                e.preventDefault();
+                if (!partialTakeModal) return;
+                const { task, nextStage } = partialTakeModal;
+                const takeQty = parseInt(partialQty) || task.quantity;
+
+                if (takeQty >= task.quantity) {
+                    setTasks(tasks.map(t => {
+                        if (t.id === task.id) {
+                            return { 
+                                ...t, 
+                                stage: nextStage, 
+                                timerRunning: false, // таймер не запущен сразу
+                                timerSeconds: 0
+                            };
+                        }
+                        return t;
+                    }));
+                    showToast(`Задача "${task.name}" взята в работу (${task.quantity} шт.). Нажмите «Старт» для запуска.`);
+                } else {
+                    const remainingQty = task.quantity - takeQty;
+                    
+                    const takenTask = {
+                        ...task,
+                        id: Date.now(),
+                        quantity: takeQty,
+                        stage: nextStage,
+                        stagesTime: calculateStagesTime(takeQty),
+                        timerSeconds: 0,
+                        timerRunning: false // таймер не запущен сразу
+                    };
+
+                    const remainingTask = {
+                        ...task,
+                        id: Date.now() + 1,
+                        quantity: remainingQty,
+                        stage: task.stage,
+                        stagesTime: calculateStagesTime(remainingQty),
+                        timerSeconds: 0,
+                        timerRunning: false
+                    };
+
+                    setTasks(tasks.flatMap(t => t.id === task.id ? [takenTask, remainingTask] : [t]));
+                    showToast(`Задача разделена: ${takeQty} шт. в работе. Нажмите «Старт» для запуска таймера.`);
+                }
+
+                setPartialTakeModal(null);
+            };
+
+            // Подтверждение обычного завершения этапа
+            const executeStageAction = () => {
+                if (!confirmAction) return;
+                const { taskId, nextStage } = confirmAction;
+
+                if (nextStage === 'completed') {
+                    const taskToComplete = tasks.find(t => t.id === taskId);
+                    if (taskToComplete) {
+                        completeAssemblyTask(taskToComplete.id, taskToComplete.name, taskToComplete.quantity, globalRole === 'worker' ? 'Светлана' : 'Сотрудник', 15);
+                    }
+                }
+
+                setTasks(tasks.map(t => {
+                    if (t.id === taskId) {
+                        return { 
+                            ...t, 
+                            stage: nextStage, 
+                            timerRunning: false,
+                            timerSeconds: 0
+                        };
+                    }
+                    return t;
+                }));
+
+                showToast(nextStage === 'completed' ? "Задача выполнена! Товар передан в Резерв FBO" : "Этап задачи успешно завершен");
+                setConfirmAction(null);
+            };
+
+            const handleAddPlanItem = (e) => {
+                e.preventDefault();
+                if (!newPlanArticle.trim()) return;
+                const oz = parseInt(newPlanOzon) || 0;
+                const wb = parseInt(newPlanWb) || 0;
+                const total = oz + wb;
+                const hours = parseFloat((total * 0.016).toFixed(2));
+
+                const newItem = {
+                    id: Date.now(),
+                    article: newPlanArticle.trim(),
+                    ozon: oz,
+                    wb: wb,
+                    total: total,
+                    hours: hours,
+                    isBox: newPlanIsBox,
+                    tailsDone: 0,
+                    sealingDone: 0,
+                    labelingDone: 0,
+                    completedDone: 0,
+                    stagesBreakdown: {
+                        tails: `${(hours * 0.5).toFixed(1)} ч`,
+                        sealing: `${(hours * 0.3).toFixed(1)} ч`,
+                        labeling: `${(hours * 0.2).toFixed(1)} ч`
+                    }
+                };
+
+                setFboPlan([...fboPlan, newItem]);
+                setNewPlanArticle("");
+                setNewPlanOzon("");
+                setNewPlanWb("");
+                setNewPlanIsBox(false);
+                setIsAddPlanModalOpen(false);
+                showToast(`Позиция "${newItem.article}" добавлена в план FBO`);
+            };
+
+            const handleSaveEditPlan = (e) => {
+                e.preventDefault();
+                if (!editPlanItem) return;
+                const oz = parseInt(editOzon) || 0;
+                const wb = parseInt(editWb) || 0;
+                const total = oz + wb;
+                const hours = parseFloat((total * 0.016).toFixed(2));
+
+                setFboPlan(fboPlan.map(item => {
+                    if (item.id === editPlanItem.id) {
+                        return { 
+                            ...item, 
+                            ozon: oz, 
+                            wb: wb, 
+                            total: total, 
+                            hours: hours,
+                            stagesBreakdown: {
+                                tails: `${(hours * 0.5).toFixed(1)} ч`,
+                                sealing: `${(hours * 0.3).toFixed(1)} ч`,
+                                labeling: `${(hours * 0.2).toFixed(1)} ч`
+                            }
+                        };
+                    }
+                    return item;
+                }));
+
+                showToast(`Позиция "${editPlanItem.article}" обновлена`);
+                setEditPlanItem(null);
+            };
+
+            const handleSaveEditWorkerTask = (e) => {
+                e.preventDefault();
+                if (!editWorkerTask) return;
+                setWorkersPlan(workersPlan.map(item => {
+                    if (item.id === editWorkerTask.id) {
+                        return { ...item, qty: parseInt(editWorkerQty) || item.qty, status: editWorkerStatus };
+                    }
+                    return item;
+                }));
+                showToast("План сборщика обновлен");
+                setEditWorkerTask(null);
+            };
+
+            const getCurrentStageTime = (task) => {
+                switch(task.stage) {
+                    case 'assigned': return `${task.stagesTime.tails} (Хвосты)`;
+                    case 'tails_progress': return `${task.stagesTime.tails} (Хвосты)`;
+                    case 'sealing_assign': return `${task.stagesTime.sealing} (Запайка)`;
+                    case 'sealing_progress': return `${task.stagesTime.sealing} (Запайка)`;
+                    case 'labeling_assign': return `${task.stagesTime.labeling} (Обклейка)`;
+                    case 'labeling_progress': return `${task.stagesTime.labeling} (Обклейка)`;
+                    case 'completed': return `Всего: ${task.stagesTime.total}`;
+                    default: return task.stagesTime.total;
+                }
+            };
+
+            const getStageBadge = (stage) => {
+                switch(stage) {
+                    case 'assigned': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-200">Назначено</span>;
+                    case 'tails_progress': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 border border-blue-200">Хвосты: В работе</span>;
+                    case 'sealing_assign': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-600 border border-indigo-200">Хвосты завершены</span>;
+                    case 'sealing_progress': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50 text-purple-600 border border-purple-200">Запайка: В работе</span>;
+                    case 'labeling_assign': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-pink-50 text-pinkBtn border border-pinkBtn/20">Запайка завершена</span>;
+                    case 'labeling_progress': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-pink-100 text-pinkBtn border border-pinkBtn/30">Обклейка: В работе</span>;
+                    case 'completed': return <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">Собрано (проверено)</span>;
+                    default: return null;
+                }
+            };
+
+            const totalManagerPlanHours = fboPlan.reduce((acc, row) => acc + Number(row.hours), 0).toFixed(2);
+
+            const groupedWorkers = workersPlan.reduce((acc, item) => {
+                if (!acc[item.worker]) acc[item.worker] = [];
+                acc[item.worker].push(item);
+                return acc;
+            }, {});
+
+            return (
+                <div className="flex flex-col h-full bg-pageBg flex-1 pb-24">
+                    {/* Header */}
+                    <header className="bg-white/90 backdrop-blur-md sticky top-0 z-20 px-4 py-3.5 border-b border-cardBorder flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <button 
+                                type="button" 
+                                onClick={() => window.location.href = 'main.html'} 
+                                aria-label="Назад" 
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cardBorder bg-white text-mainText hover:bg-coolGray transition-colors cursor-pointer"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m15 18-6-6 6-6"/>
+                                </svg>
+                            </button>
+                            <div>
+                                <h1 className="text-lg font-bold text-mainText tracking-tight">Сборка резерва FBO</h1>
+                                <p className="text-xs text-secondaryText">Управление сборкой</p>
+                            </div>
+                        </div>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-purpleAccent/10 text-purpleAccent border border-purpleAccent/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purpleAccent mr-1.5 animate-pulse"></span>
+                            Online
+                        </span>
+                    </header>
+
+                    {/* Табы */}
+                    <div className="px-4 pt-3 pb-1 bg-white border-b border-cardBorder sticky top-[69px] z-10">
+                        <div className="flex bg-coolGray p-1 rounded-xl gap-1">
+                            <button 
+                                onClick={() => setActiveTab('worker')}
+                                className={`flex-1 py-2 text-[11px] font-semibold rounded-lg transition cursor-pointer ${activeTab === 'worker' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                Актуальные задачи
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('manager')}
+                                className={`flex-1 py-2 text-[11px] font-semibold rounded-lg transition cursor-pointer ${activeTab === 'manager' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                План руководителя
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('workersPlan')}
+                                className={`flex-1 py-2 text-[11px] font-semibold rounded-lg transition cursor-pointer ${activeTab === 'workersPlan' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                План сборщиков
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* ВКЛАДКА 1: АКТУАЛЬНЫЕ ЗАДАЧИ */}
+                    {activeTab === 'worker' && (
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            {tasks.map(task => {
+                                const isProgress = task.stage.includes('progress');
+                                return (
+                                    <div key={task.id} className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-mainText">{task.name}</h3>
+                                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                    <span className="text-xs text-secondaryText">Количество:</span>
+                                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-coolGray text-mainText">{task.quantity} шт.</span>
+                                                    
+                                                    <button 
+                                                        onClick={() => setDetailTask(task)}
+                                                        className="text-xs font-semibold px-2 py-0.5 rounded-md bg-pink-50 text-pinkBtn border border-pinkBtn/20 flex items-center gap-1 hover:bg-pink-100 transition cursor-pointer"
+                                                        title="Нажмите для просмотра времени по этапам"
+                                                    >
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                        {task.stage === 'completed' ? `Всего: ${task.stagesTime.total}` : getCurrentStageTime(task)}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            
+                                            <button
+                                                onClick={() => {
+                                                    setAddQtyTask(task);
+                                                    setAddQtyAmount(10);
+                                                }}
+                                                className="px-3 py-1.5 bg-coolGray hover:bg-cardBorder text-mainText rounded-xl text-xs font-medium transition active:scale-95 cursor-pointer"
+                                            >
+                                                Добавить
+                                            </button>
+                                        </div>
+
+                                        <div className="flex items-center justify-between pt-1">
+                                            {getStageBadge(task.stage)}
+                                            
+                                            {isProgress && (
+                                                <span className="text-xs font-mono font-bold text-purpleAccent bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                                                    ⏱ Прошло: {formatTimer(task.timerSeconds)}
+                                                </span>
+                                            )}
+
+                                            <button 
+                                                onClick={() => setDetailTask(task)}
+                                                className="text-xs font-medium text-secondaryText hover:text-mainText transition-colors cursor-pointer"
+                                            >
+                                                Подробнее о времени
+                                            </button>
+                                        </div>
+
+                                        {/* Управление таймером (Кнопка Старт появляется первой до нажатия) */}
+                                        {isProgress && (
+                                            <div className="flex items-center gap-2 p-2 bg-coolGray rounded-xl border border-cardBorder justify-center">
+                                                <span className="text-[11px] font-bold text-secondaryText uppercase mr-1">Таймер:</span>
+                                                {!task.timerRunning ? (
+                                                    <button 
+                                                        onClick={() => startTimer(task.id)}
+                                                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+                                                    >
+                                                        ▶ Старт
+                                                    </button>
+                                                ) : (
+                                                    <>
+                                                        <button 
+                                                            onClick={() => pauseTimer(task.id)}
+                                                            className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+                                                        >
+                                                            ⏸ Пауза
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => stopTimer(task.id)}
+                                                            className="px-3 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+                                                        >
+                                                            ⏹ Стоп
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Кнопки переходов */}
+                                        <div className="pt-2 border-t border-cardBorder flex gap-2">
+                                            {task.stage === 'assigned' && (
+                                                <button 
+                                                    onClick={() => {
+                                                        setPartialTakeModal({ task: task, nextStage: 'tails_progress', title: 'Взять задачу «Хвосты»' });
+                                                        setPartialQty(task.quantity);
+                                                    }}
+                                                    className="w-full py-2.5 bg-pinkBtn text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Взять задачу «Хвосты»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'tails_progress' && (
+                                                <button 
+                                                    onClick={() => setConfirmAction({
+                                                        taskId: task.id,
+                                                        nextStage: 'sealing_assign',
+                                                        title: 'Завершить этап',
+                                                        message: `Завершить этап «Хвосты» для позиции "${task.name}"?`
+                                                    })}
+                                                    className="w-full py-2.5 bg-purpleAccent text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Завершить задачу «Хвосты»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'sealing_assign' && (
+                                                <button 
+                                                    onClick={() => {
+                                                        setPartialTakeModal({ task: task, nextStage: 'sealing_progress', title: 'Взять задачу «Запайка»' });
+                                                        setPartialQty(task.quantity);
+                                                    }}
+                                                    className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Взять задачу «Запайка»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'sealing_progress' && (
+                                                <button 
+                                                    onClick={() => setConfirmAction({
+                                                        taskId: task.id,
+                                                        nextStage: 'labeling_assign',
+                                                        title: 'Завершить этап',
+                                                        message: `Завершить этап «Запайка» для позиции "${task.name}"?`
+                                                    })}
+                                                    className="w-full py-2.5 bg-purpleAccent text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Завершить задачу «Запайка»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'labeling_assign' && (
+                                                <button 
+                                                    onClick={() => {
+                                                        setPartialTakeModal({ task: task, nextStage: 'labeling_progress', title: 'Взять задачу «Обклейка»' });
+                                                        setPartialQty(task.quantity);
+                                                    }}
+                                                    className="w-full py-2.5 bg-pinkBtn text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Взять задачу «Обклейка»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'labeling_progress' && (
+                                                <button 
+                                                    onClick={() => setConfirmAction({
+                                                        taskId: task.id,
+                                                        nextStage: 'completed',
+                                                        title: 'Завершить этап',
+                                                        message: `Завершить этап «Обклейка» и отправить товар в Резерв FBO?`
+                                                    })}
+                                                    className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-medium shadow-sm hover:opacity-95 transition cursor-pointer"
+                                                >
+                                                    Завершить задачу «Обклейка»
+                                                </button>
+                                            )}
+
+                                            {task.stage === 'completed' && (
+                                                <div className="w-full py-2.5 text-center text-xs font-medium text-emerald-600 bg-emerald-50 rounded-xl border border-emerald-200">
+                                                    Проверено руководителем / Сергеем ✓
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* ВКЛАДКА 2: ПЛАН РУКОВОДИТЕЛЯ */}
+                    {activeTab === 'manager' && (
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            <div className="p-3.5 bg-purple-50/70 border border-purple-200 rounded-2xl flex items-center justify-between">
+                                <div>
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-purple-700">Суммарное время плана</div>
+                                    <div className="text-xs text-secondaryText">Всего позиций: {fboPlan.length} шт.</div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-base font-extrabold text-purpleAccent">{totalManagerPlanHours} ч.</div>
+                                    <div className="text-[10px] text-purple-600 font-medium">~{Math.round(totalManagerPlanHours / 8)} рабочих смен</div>
+                                </div>
+                            </div>
+
+                            <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                                <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                    <h3 className="text-sm font-bold text-mainText">Сводный план FBO</h3>
+                                    <button 
+                                        onClick={() => setIsAddPlanModalOpen(true)}
+                                        className="px-3 py-1.5 text-white font-semibold rounded-xl text-xs transition shadow-xs hover:opacity-95 active:scale-95 cursor-pointer"
+                                        style={{ backgroundColor: '#E23E9F' }}
+                                    >
+                                        + Добавить позицию
+                                    </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {fboPlan.map((row) => (
+                                        <div key={row.id} className={`p-3.5 rounded-2xl border text-xs space-y-2.5 ${row.isBox ? 'bg-amber-50/50 border-amber-200' : 'bg-coolGray border-cardBorder'}`}>
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-bold text-sm text-mainText">{row.article}</span>
+                                                <button 
+                                                    onClick={() => setDetailPlanItem(row)}
+                                                    className="font-bold text-pinkBtn px-2.5 py-1 rounded-lg bg-pink-50 border border-pinkBtn/20 hover:bg-pink-100 transition flex items-center gap-1 cursor-pointer"
+                                                >
+                                                    ⏱ {row.hours} ч.
+                                                </button>
+                                            </div>
+                                            
+                                            <div className="flex justify-between text-secondaryText">
+                                                <span>Ozon: <strong className="text-mainText">{row.ozon}</strong> шт. | WB: <strong className="text-mainText">{row.wb}</strong> шт.</span>
+                                                <span className="font-semibold text-mainText">Общий: {row.total} шт.</span>
+                                            </div>
+
+                                            {row.isBox && (
+                                                <div className="text-[11px] text-amber-700 font-medium">⚡ В шуберах (только обклейка)</div>
+                                            )}
+
+                                            <div className="flex gap-2 pt-1 border-t border-cardBorder/60">
+                                                <button
+                                                    onClick={() => {
+                                                        setEditPlanItem(row);
+                                                        setEditOzon(row.ozon);
+                                                        setEditWb(row.wb);
+                                                    }}
+                                                    className="flex-1 py-1.5 bg-white border border-cardBorder rounded-xl text-xs font-semibold text-mainText hover:bg-gray-50 transition cursor-pointer"
+                                                >
+                                                    Редактировать
+                                                </button>
+                                                <button
+                                                    onClick={() => setDetailPlanItem(row)}
+                                                    className="flex-1 py-1.5 bg-white border border-cardBorder rounded-xl text-xs font-semibold text-blueAccent hover:bg-blue-50 transition cursor-pointer"
+                                                >
+                                                    Подробнее
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ВКЛАДКА 3: ПЛАН СБОРЩИКОВ */}
+                    {activeTab === 'workersPlan' && (
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                            {Object.entries(groupedWorkers).map(([workerName, items]) => (
+                                <div key={workerName} className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                                    <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-7 h-7 rounded-full bg-pink-100 text-pinkBtn flex items-center justify-center font-bold text-xs">
+                                                {workerName[0]}
+                                            </div>
+                                            <h3 className="text-sm font-bold text-mainText">{workerName}</h3>
+                                        </div>
+                                        <span className="px-2 py-0.5 bg-coolGray text-secondaryText rounded-md text-xs font-semibold">{items.length} задач</span>
+                                    </div>
+
+                                    <div className="space-y-2.5">
+                                        {items.map((item) => (
+                                            <div key={item.id} className="p-3 bg-coolGray border border-cardBorder rounded-xl text-xs space-y-2">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="font-bold text-mainText text-[13px]">{item.article}</span>
+                                                    <span className={`px-2 py-0.5 rounded font-medium ${item.status === 'Выполнено' ? 'bg-emerald-50 text-emerald-700' : item.status === 'В работе' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                                                        {item.status}
+                                                    </span>
+                                                </div>
+
+                                                <div className="flex justify-between text-secondaryText items-center">
+                                                    <span>Этап: <strong className="text-mainText">{item.taskType}</strong></span>
+                                                    <span className="px-2 py-0.5 rounded bg-pink-50 text-pinkBtn font-semibold border border-pinkBtn/20">
+                                                        ⏳ {item.estimatedTime || '25 мин'}
+                                                    </span>
+                                                </div>
+
+                                                <div className="flex justify-between text-secondaryText">
+                                                    <span>Дата: {item.date}</span>
+                                                    <span className="font-bold text-mainText">{item.qty} шт.</span>
+                                                </div>
+
+                                                <button
+                                                    onClick={() => {
+                                                        setEditWorkerTask(item);
+                                                        setEditWorkerQty(item.qty);
+                                                        setEditWorkerStatus(item.status);
+                                                    }}
+                                                    className="w-full py-1.5 bg-white border border-cardBorder rounded-lg text-xs font-semibold text-mainText hover:bg-gray-50 transition cursor-pointer mt-1"
+                                                >
+                                                    Редактировать план
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Кнопка внизу */}
+                    {activeTab === 'worker' && (
+                        <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-white/90 backdrop-blur-md border-t border-cardBorder z-30">
+                            <button
+                                onClick={() => setIsAddTaskModalOpen(true)}
+                                className="w-full py-3.5 text-white font-semibold rounded-2xl shadow-lg hover:opacity-95 active:scale-[0.98] transition flex items-center justify-center gap-2 text-sm cursor-pointer"
+                                style={{ backgroundColor: '#E23E9F' }}
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"></path>
+                                </svg>
+                                Добавить задачу
+                            </button>
+                        </div>
+                    )}
+
+                    {/* POPUP: Калькулятор времени при взятии части задачи */}
+                    {partialTakeModal && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">{partialTakeModal.title}</h3>
+                                    <button onClick={() => setPartialTakeModal(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Позиция: <strong className="text-mainText">{partialTakeModal.task.name}</strong> (Доступно: {partialTakeModal.task.quantity} шт.)</p>
+
+                                <form onSubmit={handleConfirmPartialTake} className="space-y-4 text-xs">
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Сколько штук берете в работу?</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max={partialTakeModal.task.quantity}
+                                            required
+                                            value={partialQty}
+                                            onChange={e => setPartialQty(e.target.value)}
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-mainText text-sm font-bold focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                        />
+                                    </div>
+
+                                    {/* Калькулятор необходимого времени */}
+                                    <div className="p-3.5 bg-pink-50/70 border border-pinkBtn/20 rounded-2xl space-y-1.5">
+                                        <div className="text-[11px] font-bold text-pinkBtn uppercase tracking-wider">⏱ Калькулятор времени</div>
+                                        <div className="flex justify-between text-secondaryText">
+                                            <span>Норматив на объем ({partialQty} шт.):</span>
+                                            <strong className="text-mainText">
+                                                {Math.round((parseInt(partialQty)||0) * 0.045)} мин
+                                            </strong>
+                                        </div>
+                                        <div className="text-[10px] text-secondaryText italic">Задача разделится на взятую часть и остаток. Таймер начнется после нажатия «Старт».</div>
+                                    </div>
+
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setPartialTakeModal(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Подтвердить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* POPUP: Обычное подтверждение при завершении этапа */}
+                    {confirmAction && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <h3 className="text-base font-bold text-mainText">{confirmAction.title}</h3>
+                                <p className="text-xs text-secondaryText leading-relaxed">{confirmAction.message}</p>
+                                <div className="flex gap-2 pt-2">
+                                    <button onClick={() => setConfirmAction(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl text-xs hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                    <button onClick={executeStageAction} className="flex-1 text-white font-medium py-2.5 rounded-xl text-xs shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Подтвердить</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Добавить задачу в Актуальные */}
+                    {isAddTaskModalOpen && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">Добавить задачу</h3>
+                                    <button onClick={() => setIsAddTaskModalOpen(false)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <form onSubmit={handleAddTask} className="space-y-3.5 text-xs">
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Артикул / Название товара</label>
+                                        <input 
+                                            type="text" 
+                                            required 
+                                            value={newTaskName} 
+                                            onChange={e => setNewTaskName(e.target.value)} 
+                                            placeholder="например, R2GO_VF_NEW_10" 
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50" 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Количество (шт.)</label>
+                                        <input 
+                                            type="number" 
+                                            min="1" 
+                                            required 
+                                            value={newTaskQty} 
+                                            onChange={e => setNewTaskQty(e.target.value)} 
+                                            placeholder="500" 
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50" 
+                                        />
+                                    </div>
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setIsAddTaskModalOpen(false)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Создать</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Добавить позицию в план FBO */}
+                    {isAddPlanModalOpen && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+                            <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center mb-2">
+                                    <h3 className="text-base font-bold text-mainText">Добавить позицию в план FBO</h3>
+                                    <button onClick={() => setIsAddPlanModalOpen(false)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <form onSubmit={handleAddPlanItem} className="space-y-3.5">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">Артикул / Название</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={newPlanArticle}
+                                            onChange={(e) => setNewPlanArticle(e.target.value)}
+                                            placeholder="например, R2GO_VF_AA_NEW"
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">Кол-во OZON</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={newPlanOzon}
+                                                onChange={(e) => setNewPlanOzon(e.target.value)}
+                                                placeholder="100"
+                                                className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">Кол-во WB</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={newPlanWb}
+                                                onChange={(e) => setNewPlanWb(e.target.value)}
+                                                placeholder="200"
+                                                className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 pt-1">
+                                        <input
+                                            type="checkbox"
+                                            id="boxCheck"
+                                            checked={newPlanIsBox}
+                                            onChange={(e) => setNewPlanIsBox(e.target.checked)}
+                                            className="w-4 h-4 accent-pinkBtn rounded cursor-pointer"
+                                        />
+                                        <label htmlFor="boxCheck" className="text-xs text-mainText font-medium cursor-pointer">В шуберах (только обклейка)</label>
+                                    </div>
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setIsAddPlanModalOpen(false)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl text-sm hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl text-sm shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Добавить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Редактировать WB и Ozon */}
+                    {editPlanItem && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+                            <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center mb-1">
+                                    <h3 className="text-base font-bold text-mainText">Редактирование количества</h3>
+                                    <button onClick={() => setEditPlanItem(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Позиция: <strong className="text-mainText">{editPlanItem.article}</strong></p>
+
+                                <form onSubmit={handleSaveEditPlan} className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">Ozon (шт.)</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={editOzon}
+                                                onChange={(e) => setEditOzon(e.target.value)}
+                                                className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">WB (шт.)</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={editWb}
+                                                onChange={(e) => setEditWb(e.target.value)}
+                                                className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3 bg-coolGray rounded-xl text-xs space-y-1">
+                                        <div className="flex justify-between text-secondaryText">
+                                            <span>Итоговое количество:</span>
+                                            <strong className="text-mainText">{(parseInt(editOzon)||0) + (parseInt(editWb)||0)} шт.</strong>
+                                        </div>
+                                        <div className="flex justify-between text-secondaryText">
+                                            <span>Расчетное время:</span>
+                                            <strong className="text-pinkBtn">{(((parseInt(editOzon)||0) + (parseInt(editWb)||0)) * 0.016).toFixed(2)} ч.</strong>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2 pt-1">
+                                        <button type="button" onClick={() => setEditPlanItem(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl text-sm hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl text-sm shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Сохранить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Popup детализации времени */}
+                    {detailPlanItem && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">Время на этапы сборки</h3>
+                                    <button onClick={() => setDetailPlanItem(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Артикул: <strong className="text-mainText">{detailPlanItem.article}</strong> (Всего: {detailPlanItem.total} шт.)</p>
+
+                                <div className="space-y-3 text-xs">
+                                    <div className="p-3 bg-coolGray rounded-xl space-y-1.5">
+                                        <div className="flex justify-between font-semibold">
+                                            <span>1. Хвосты (обрезка):</span>
+                                            <span className="text-blueAccent font-bold">{detailPlanItem.stagesBreakdown?.tails || '2.5 ч'}</span>
+                                        </div>
+                                        <div className="w-full bg-cardBorder h-1.5 rounded-full overflow-hidden">
+                                            <div className="bg-blueAccent h-full" style={{ width: `${Math.min(100, (detailPlanItem.tailsDone / detailPlanItem.total) * 100)}%` }}></div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3 bg-coolGray rounded-xl space-y-1.5">
+                                        <div className="flex justify-between font-semibold">
+                                            <span>2. Запайка (рукав):</span>
+                                            <span className="text-purpleAccent font-bold">{detailPlanItem.stagesBreakdown?.sealing || '1.5 ч'}</span>
+                                        </div>
+                                        <div className="w-full bg-cardBorder h-1.5 rounded-full overflow-hidden">
+                                            <div className="bg-purpleAccent h-full" style={{ width: `${Math.min(100, (detailPlanItem.sealingDone / detailPlanItem.total) * 100)}%` }}></div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3 bg-coolGray rounded-xl space-y-1.5">
+                                        <div className="flex justify-between font-semibold">
+                                            <span>3. Обклейка ШК:</span>
+                                            <span className="text-pinkBtn font-bold">{detailPlanItem.stagesBreakdown?.labeling || '1.0 ч'}</span>
+                                        </div>
+                                        <div className="w-full bg-cardBorder h-1.5 rounded-full overflow-hidden">
+                                            <div className="bg-pinkBtn h-full" style={{ width: `${Math.min(100, (detailPlanItem.labelingDone / detailPlanItem.total) * 100)}%` }}></div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3 bg-purple-50 text-purple-900 rounded-xl space-y-1 border border-purple-200">
+                                        <div className="flex justify-between font-bold">
+                                            <span>Общее время на весь цикл:</span>
+                                            <span className="text-purpleAccent font-extrabold">{detailPlanItem.hours} ч.</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button onClick={() => setDetailPlanItem(null)} className="w-full py-2.5 bg-coolGray text-mainText rounded-xl text-xs font-semibold hover:bg-cardBorder transition cursor-pointer">Закрыть</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Редактировать план сборщика */}
+                    {editWorkerTask && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">Редактировать план сборщика</h3>
+                                    <button onClick={() => setEditWorkerTask(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Сотрудник: <strong className="text-mainText">{editWorkerTask.worker}</strong> ({editWorkerTask.article})</p>
+
+                                <form onSubmit={handleSaveEditWorkerTask} className="space-y-3.5 text-xs">
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Количество (шт.)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            required
+                                            value={editWorkerQty}
+                                            onChange={(e) => setEditWorkerQty(e.target.value)}
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-secondaryText uppercase tracking-wider mb-1">Статус</label>
+                                        <select
+                                            value={editWorkerStatus}
+                                            onChange={(e) => setEditWorkerStatus(e.target.value)}
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50 font-semibold"
+                                        >
+                                            <option value="Назначено">Назначено</option>
+                                            <option value="В работе">В работе</option>
+                                            <option value="Выполнено">Выполнено</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setEditWorkerTask(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Сохранить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Добавить количество к задаче */}
+                    {addQtyTask && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+                            <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center mb-2">
+                                    <h3 className="text-base font-bold text-mainText">Добавить количество</h3>
+                                    <button onClick={() => setAddQtyTask(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Позиция: <span className="font-semibold text-mainText">{addQtyTask.name}</span> (Текущее: {addQtyTask.quantity} шт.)</p>
+                                <form onSubmit={handleAddQuantity} className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-secondaryText uppercase tracking-wider mb-1">Сколько добавить (шт.)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            required
+                                            value={addQtyAmount}
+                                            onChange={(e) => setAddQtyAmount(e.target.value)}
+                                            className="w-full px-3.5 py-2.5 bg-coolGray border border-cardBorder rounded-xl text-sm text-mainText focus:outline-none focus:ring-2 focus:ring-pinkBtn/50"
+                                        />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {[10, 50, 100, 200].map(val => (
+                                            <button key={val} type="button" onClick={() => setAddQtyAmount(val)} className="flex-1 py-1.5 bg-coolGray hover:bg-cardBorder rounded-lg text-xs font-medium text-mainText transition cursor-pointer">+{val}</button>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-2 pt-2">
+                                        <button type="button" onClick={() => setAddQtyTask(null)} className="flex-1 bg-coolGray text-mainText font-medium py-2.5 rounded-xl text-sm hover:bg-cardBorder transition cursor-pointer">Отмена</button>
+                                        <button type="submit" className="flex-1 text-white font-medium py-2.5 rounded-xl text-sm shadow-sm hover:opacity-95 transition cursor-pointer" style={{ backgroundColor: '#E23E9F' }}>Добавить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal: Подробнее о времени по задаче */}
+                    {detailTask && (
+                        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-cardBorder space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-base font-bold text-mainText">Время по этапам сборки</h3>
+                                    <button onClick={() => setDetailTask(null)} className="w-8 h-8 rounded-full bg-coolGray flex items-center justify-center text-secondaryText cursor-pointer">✕</button>
+                                </div>
+                                <p className="text-xs text-secondaryText">Позиция: <span className="font-semibold text-mainText">{detailTask.name}</span> ({detailTask.quantity} шт.)</p>
+                                
+                                <div className="space-y-2 text-xs">
+                                    <div className="flex justify-between p-2.5 bg-coolGray rounded-xl">
+                                        <span>Хвосты (обрезка пластика):</span>
+                                        <span className="font-bold">{detailTask.stagesTime.tails}</span>
+                                    </div>
+                                    <div className="flex justify-between p-2.5 bg-coolGray rounded-xl">
+                                        <span>Запайка (рукав + печь):</span>
+                                        <span className="font-bold">{detailTask.stagesTime.sealing}</span>
+                                    </div>
+                                    <div className="flex justify-between p-2.5 bg-coolGray rounded-xl">
+                                        <span>Обклейка ШК / стикеров:</span>
+                                        <span className="font-bold">{detailTask.stagesTime.labeling}</span>
+                                    </div>
+                                    <div className="flex justify-between p-2.5 bg-pinkBtn/10 text-pinkBtn font-bold rounded-xl mt-2">
+                                        <span>Общее расчетное время:</span>
+                                        <span>{detailTask.stagesTime.total}</span>
+                                    </div>
+                                </div>
+
+                                <button onClick={() => setDetailTask(null)} className="w-full py-2.5 bg-coolGray text-mainText rounded-xl text-xs font-semibold hover:bg-cardBorder transition cursor-pointer">Закрыть</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Toast */}
+                    {toast && (
+                        <div className="absolute bottom-6 left-4 right-4 z-50 bg-mainText text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between text-xs animate-bounce">
+                            <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-pinkBtn"></span>
+                                <span className="font-medium">{toast}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

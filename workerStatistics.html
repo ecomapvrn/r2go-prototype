@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Статистика и сделка — R2GO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        pageBg: '#F5F5F5',
+                        coolGray: '#F2F6F9',
+                        cardBg: '#FFFFFF',
+                        mainText: '#111111',
+                        secondaryText: '#858585',
+                        cardBorder: '#E4E6E8',
+                        pinkBtn: '#E23E9F',
+                        purpleAccent: '#7C3AED',
+                        blueAccent: '#2563EB',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #F5F5F5;
+            color: #111111;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
+        ::-webkit-scrollbar-thumb { background: #E4E6E8; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-pageBg text-mainText min-h-screen flex items-center justify-center p-0 sm:p-4">
+
+    <div id="root" class="w-full max-w-md bg-pageBg min-h-screen sm:min-h-[850px] sm:rounded-3xl sm:shadow-2xl sm:border border-cardBorder overflow-hidden flex flex-col relative"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        // Данные по периодам (День, Неделя, Месяц)
+        const statsData = {
+            day: {
+                periodTitle: "26 Октября 2026",
+                earned: "2 450.00",
+                toPay: "2 450.00",
+                paid: "0.00",
+                status: "Не оплачено",
+                statusColor: "bg-amber-50 text-amber-600 border-amber-200",
+                items: { tails: 500, sealing: 300, labeling: 800, total: 1600 },
+                planTarget: 1400,
+                overfulfillment: 114,
+                history: [
+                    { id: 1, title: "R2GO_VF_ASM_New (Хвосты)", category: "Сборка резерва", qty: 500, time: "11:20", amount: "750.00 ₽", done: true },
+                    { id: 2, title: "R2GO_VF_AS_EF (Запайка)", category: "Сборка FBO", qty: 300, time: "14:15", amount: "600.00 ₽", done: true },
+                    { id: 3, title: "R2GO_VF_MIX_2.1 (Обклейка)", category: "Обклейка ШК", qty: 800, time: "16:45", amount: "1 100.00 ₽", done: true }
+                ]
+            },
+            week: {
+                periodTitle: "Неделя 4 (20 – 26 Октября)",
+                earned: "14 800.00",
+                toPay: "9 800.00",
+                paid: "5 000.00",
+                status: "Частично оплачено",
+                statusColor: "bg-blue-50 text-blue-600 border-blue-200",
+                items: { tails: 3200, sealing: 2100, labeling: 4500, total: 9800 },
+                planTarget: 8500,
+                overfulfillment: 115,
+                history: [
+                    { id: 10, title: "Итог смены (26 Октября)", category: "Выполнено 3 задачи", qty: 1600, time: "18:00", amount: "2 450.00 ₽", done: true },
+                    { id: 9, title: "Итог смены (24 Октября)", category: "Выполнено 4 задачи", qty: 2200, time: "18:00", amount: "3 350.00 ₽", done: true },
+                    { id: 8, title: "Итог смены (22 Октября)", category: "Выполнено 2 задачи", qty: 1800, time: "17:30", amount: "2 700.00 ₽", done: true },
+                    { id: 7, title: "Выплата аванса", category: "Выплата на карту", qty: "-", time: "21 Окт", amount: "-5 000.00 ₽", done: true }
+                ]
+            },
+            month: {
+                periodTitle: "Октябрь 2026",
+                earned: "58 400.00",
+                toPay: "18 400.00",
+                paid: "40 000.00",
+                status: "Частично оплачено",
+                statusColor: "bg-blue-50 text-blue-600 border-blue-200",
+                items: { tails: 12400, sealing: 9800, labeling: 18200, total: 40400 },
+                planTarget: 35000,
+                overfulfillment: 115,
+                history: [
+                    { id: 101, title: "Неделя 4 (20 - 26 Окт)", category: "Сдельная оплата", qty: 9800, time: "26 Окт", amount: "14 800.00 ₽", done: true },
+                    { id: 102, title: "Неделя 3 (13 - 19 Окт)", category: "Сдельная оплата", qty: 10200, time: "19 Окт", amount: "15 200.00 ₽", done: true },
+                    { id: 103, title: "Неделя 2 (06 - 12 Окт)", category: "Сдельная оплата", qty: 10100, time: "12 Окт", amount: "14 400.00 ₽", done: true },
+                    { id: 104, title: "Неделя 1 (01 - 05 Окт)", category: "Сдельная оплата", qty: 10300, time: "05 Окт", amount: "14 000.00 ₽", done: true }
+                ]
+            }
+        };
+
+        function App() {
+            const [period, setPeriod] = useState('day'); // 'day' | 'week' | 'month'
+            const current = statsData[period];
+
+            return (
+                <div className="flex flex-col h-full bg-pageBg flex-1 pb-10">
+                    {/* Header */}
+                    <header className="bg-white/90 backdrop-blur-md sticky top-0 z-20 px-4 py-3.5 border-b border-cardBorder flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <button 
+                                type="button" 
+                                onClick={() => window.location.href = 'main.html'} 
+                                aria-label="Назад" 
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cardBorder bg-white text-mainText hover:bg-coolGray transition-colors cursor-pointer"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m15 18-6-6 6-6"/>
+                                </svg>
+                            </button>
+                            <div>
+                                <h1 className="text-lg font-bold text-mainText tracking-tight">Статистика и сделка</h1>
+                                <p className="text-xs text-secondaryText">Учёт выработки и оплаты</p>
+                            </div>
+                        </div>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-purpleAccent/10 text-purpleAccent border border-purpleAccent/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purpleAccent mr-1.5 animate-pulse"></span>
+                            Online
+                        </span>
+                    </header>
+
+                    {/* Фильтр по периодам */}
+                    <div className="px-4 pt-3 pb-2 bg-white border-b border-cardBorder sticky top-[69px] z-10">
+                        <div className="flex bg-coolGray p-1 rounded-xl">
+                            <button 
+                                onClick={() => setPeriod('day')}
+                                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${period === 'day' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                День
+                            </button>
+                            <button 
+                                onClick={() => setPeriod('week')}
+                                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${period === 'week' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                Неделя
+                            </button>
+                            <button 
+                                onClick={() => setPeriod('month')}
+                                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${period === 'month' ? 'bg-white text-mainText shadow-xs' : 'text-secondaryText hover:text-mainText'}`}
+                            >
+                                Месяц
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+                        {/* Блок 1: Заработок */}
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                            <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                <div>
+                                    <h3 className="text-xs font-bold text-secondaryText uppercase tracking-wider">Заработок</h3>
+                                    <p className="text-sm font-bold text-mainText mt-0.5">{current.periodTitle}</p>
+                                </div>
+                                <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${current.statusColor}`}>
+                                    {current.status}
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 pt-1">
+                                <div className="p-3 bg-coolGray rounded-xl text-center">
+                                    <div className="text-[10px] text-secondaryText font-medium uppercase">Начислено</div>
+                                    <div className="text-sm font-bold text-mainText mt-1">{current.earned} ₽</div>
+                                </div>
+                                <div className="p-3 bg-pink-50/60 border border-pinkBtn/20 rounded-xl text-center">
+                                    <div className="text-[10px] text-pinkBtn font-semibold uppercase">К выплате</div>
+                                    <div className="text-sm font-bold text-pinkBtn mt-1">{current.toPay} ₽</div>
+                                </div>
+                                <div className="p-3 bg-coolGray rounded-xl text-center">
+                                    <div className="text-[10px] text-secondaryText font-medium uppercase">Выплачено</div>
+                                    <div className="text-sm font-bold text-emerald-600 mt-1">{current.paid} ₽</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Блок 2: Сделано товара (по этапам) */}
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                            <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                <h3 className="text-xs font-bold text-secondaryText uppercase tracking-wider">Сделано товара</h3>
+                                <span className="text-xs font-bold text-mainText">Всего: {current.items.total} шт.</span>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
+                                    <div className="text-[11px] font-semibold text-blue-700">Хвосты</div>
+                                    <div className="text-base font-bold text-mainText mt-1">{current.items.tails} <span className="text-xs font-normal text-secondaryText">шт</span></div>
+                                </div>
+                                <div className="p-3 bg-purple-50/50 border border-purple-100 rounded-xl">
+                                    <div className="text-[11px] font-semibold text-purple-700">Запайка</div>
+                                    <div className="text-base font-bold text-mainText mt-1">{current.items.sealing} <span className="text-xs font-normal text-secondaryText">шт</span></div>
+                                </div>
+                                <div className="p-3 bg-pink-50/50 border border-pink-100 rounded-xl">
+                                    <div className="text-[11px] font-semibold text-pinkBtn">Обклейка</div>
+                                    <div className="text-base font-bold text-mainText mt-1">{current.items.labeling} <span className="text-xs font-normal text-secondaryText">шт</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Блок 3: Процент перевыполнения плана */}
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-2.5">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-xs font-bold text-secondaryText uppercase tracking-wider">Выполнение плана</h3>
+                                <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                    +{current.overfulfillment - 100}% перевыполнение
+                                </span>
+                            </div>
+
+                            <div className="flex justify-between items-baseline pt-1">
+                                <span className="text-2xl font-extrabold text-mainText">{current.overfulfillment}%</span>
+                                <span className="text-xs text-secondaryText">План: {current.planTarget} шт. / Сделано: {current.items.total} шт.</span>
+                            </div>
+
+                            <div className="w-full bg-coolGray h-2.5 rounded-full overflow-hidden border border-cardBorder">
+                                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.min(100, current.overfulfillment)}%` }}></div>
+                            </div>
+                        </div>
+
+                        {/* Блок 4: Детализация выполненных работ (макет как на скрине 5.PNG) */}
+                        <div className="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-xs space-y-3">
+                            <div className="flex justify-between items-center pb-2 border-b border-cardBorder">
+                                <h3 className="text-sm font-bold text-mainText">История работ</h3>
+                                <span className="text-xs text-secondaryText">{current.history.length} записей</span>
+                            </div>
+
+                            <div className="space-y-2">
+                                {current.history.map((item) => (
+                                    <div key={item.id} className="p-3 bg-coolGray border border-cardBorder rounded-xl flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <div className="text-xs font-bold text-mainText flex items-center gap-1.5">
+                                                <span>{item.title}</span>
+                                                {item.done && (
+                                                    <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path>
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <div className="text-[11px] text-secondaryText">
+                                                {item.category} {item.qty !== "-" && `• ${item.qty} шт.`} • {item.time}
+                                            </div>
+                                        </div>
+                                        <div className="text-xs font-bold text-mainText whitespace-nowrap pl-2">
+                                            {item.amount}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
